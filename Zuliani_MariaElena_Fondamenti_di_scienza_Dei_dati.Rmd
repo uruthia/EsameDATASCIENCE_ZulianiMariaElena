@@ -1,0 +1,507 @@
+---
+title: "esame: Fondamenti di scienza dei dati"
+author: "Maria Elena Zuliani"
+date: "2022-08-26"
+output: 
+   ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Gli Anime
+
+Apprezzo molto la cultura asiatica e son cresciuta guardando le opere di animazione giapponese chiamate "Anime". Da qualche anno segno tutto quello che guardo su un'applicazione chiamata "MyAnimeList" che mi ha permesso di scaricare tutti i miei dati. Inoltre il mio dataset verrà affiancato dal dataset di anime più recente che ho trovato su Kaggle.
+
+```{r include=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyverse)
+library(scales)
+library(forcats)
+library(forecast)
+library(pals)
+library(ggrepel)
+library(gridExtra)
+
+#importare il dataset della mia lista di ANIME
+MyAnimeList <- read.csv(file="C:/Users/maria/OneDrive/Documenti/MyAnimeList.csv")
+#creo le colonne ed elimino righe contenenti NA
+MyAnimeList <- MyAnimeList %>%
+  separate( Anime.Db.id.Title.Type.Episodes.Watched.episodes.My.Score.Status, into = c('anime_id', 'Name', 'Type', 'Episodes', 'Watched', 'MyScore', 'Status'), sep =";") %>%
+  filter( !is.na(Type),!is.na(Status), !is.na(MyScore) ) 
+  
+#lista di anime di Kaggle
+AnimeList2022new <- read.csv(file="C:/Users/maria/OneDrive/Documenti/Anime2022new.csv")
+```
+
+## il dataset
+
+I due dataset contengono un ID univoco dell'opera, il suo titolo, il mio punteggio, il punteggio dato dalla community e molte altre caratteristiche dell'opera. Per prima cosa i due dataset devono essere ripuliti e modificati in modo che siano più facili da utilizzare e contengano solo i dati importanti.
+
+```{r include=FALSE}
+colnames(AnimeList2022new)[1] <- "anime_id"  #cambio il nome della colonna "mal_id"
+colnames(AnimeList2022new)[6] <- "anime_Status"
+
+
+#aggiungo colonne di dati alla mia lista di Anime utilizzando il database 2022
+MyAnimeList <- merge( MyAnimeList, AnimeList2022new, by ="anime_id", all.x = TRUE)
+
+MyAnimeList <- MyAnimeList %>%  #seleziono solo le colonne che mi interesssano
+  select( anime_id,Name, Type, Episodes, Watched, MyScore, Status, anime_Status,score, anime_Status, aired_from, aired_to, source, duration, rating,premiered_season,
+         premiered_year, broadcast_day, broadcast_time, genres, demographics, studios, producers, licensors)
+
+#modifica elementi delle colonne
+MyAnimeList$genres <- gsub("\\[|\\]|'" , "", as.character(MyAnimeList$genres)) #elimino le parentesi dalla colonna generes
+MyAnimeList$genres <- strsplit( MyAnimeList$genres, ",")    #lista dei generi dell'anime
+
+MyAnimeList$demographics <- gsub("\\[|\\]|'" , "", as.character(MyAnimeList$demographics)) #elimino le parentesi dalla colonna demographs
+MyAnimeList$studios <- gsub("\\[|\\]|'" , "", as.character(MyAnimeList$studios)) #elimino le parentesi dalla colonna generes
+MyAnimeList$studios <- strsplit( MyAnimeList$studios, ",")    #lista dei generi dell'anime
+MyAnimeList$producers <- gsub("\\[|\\]|'" , "", as.character(MyAnimeList$producers)) #elimino le parentesi dalla colonna producers
+MyAnimeList$producers <- strsplit(MyAnimeList$producers, ",")
+MyAnimeList$licensors <- gsub("\\[|\\]|'" , "", as.character(MyAnimeList$licensors)) #elimino le parentesi dalla colonna licensors
+
+
+###modifica tipo delle colonne
+MyAnimeList$aired_from <- as.Date( MyAnimeList$aired_from, tz = NULL)  #cambio il tipo in "date"
+MyAnimeList$aired_to <- as.Date( MyAnimeList$aired_to, tz = NULL)
+MyAnimeList$Episodes <- as.numeric(MyAnimeList$Episodes)
+MyAnimeList$MyScore <- as.numeric(MyAnimeList$MyScore)
+MyAnimeList$anime_id <- as.numeric(MyAnimeList$anime_id)
+MyAnimeList$demographics[ MyAnimeList$demographics == ""] <- "Not defined"
+
+### AnimeList2022----tidy----
+                           ### animelist2022new
+#modifica elementi delle colonne
+AnimeList2022new$genres <- gsub("\\[|\\]|'" , "", as.character(AnimeList2022new$genres)) #elimino le parentesi dalla colonna generes
+AnimeList2022new$genres <- strsplit( AnimeList2022new$genres, ", ")    #lista dei generi dell'anime
+AnimeList2022new$demographics <- gsub("\\[|\\]|'" , "", as.character(AnimeList2022new$demographics)) #elimino le parentesi dalla colonna demographs
+AnimeList2022new$demographics <- strsplit( AnimeList2022new$demographics, ", ")    #lista dei generi dell'anime
+AnimeList2022new$studios <- gsub("\\[|\\]|'" , "", as.character(AnimeList2022new$studios)) #elimino le parentesi dalla colonna generes
+
+AnimeList2022new$producers <- gsub("\\[|\\]|'" , "", as.character(AnimeList2022new$producers)) #elimino le parentesi dalla colonna producers
+AnimeList2022new$producers <- strsplit(AnimeList2022new$producers, ", ")
+AnimeList2022new$licensors <- gsub("\\[|\\]|'" , "", as.character(AnimeList2022new$licensors)) #elimino le parentesi dalla colonna licensors
+
+#cambio il tipo in "date"
+AnimeList2022new$aired_from <- as.Date( AnimeList2022new$aired_from, tz = NULL)  
+AnimeList2022new$aired_to <- as.Date( AnimeList2022new$aired_to, tz = NULL)
+
+```
+
+## Qual'è il pubblico a cui è indirizzato?
+
+Come si può vedere la maggior parte delle opere sono indirizzate ad un pubblico giovane, ma a differenza di quello che molti credono ve ne sono molti che trattano argomenti per adulti e che quindi sono sottoposti a censura.
+
+```{r echo=FALSE, fig.height= 4, fig.width= 8}
+### classificazione della censura
+rating_data <- AnimeList2022new %>%
+  filter(rating != "") %>%
+  group_by(rating) %>%
+  summarise( count = n() ) %>%
+  arrange( -count)
+
+ratingplot1 <- ggplot(rating_data, aes( x = rating, y = count, fill = as.factor(rating) )) +
+  geom_col()+
+  guides( fill = guide_legend(title = "censura") )+
+  labs( x = "censura", y = "numero di anime") +
+  scale_fill_manual(values = as.vector(cubicyf(7)))+
+  theme(axis.text.x  = element_blank(), panel.background = element_rect(fill = "white"))
+
+
+### Tipologia di audience
+Demographic_data <-AnimeList2022new %>%
+  filter(demographics != "") %>%
+  unnest(demographics)%>%
+  count(demographics)
+
+audiencePlot1 <- ggplot( Demographic_data, aes( x = demographics, y =n, fill = as.factor(demographics) ) ) +
+  geom_col() +
+  theme_minimal()+
+  scale_fill_manual(values = as.vector(cubicl(10)))+
+  guides( fill = guide_legend(title = " audience") ) +
+  labs( x = "audience", y = "numero di anime")
+
+grid.arrange( audiencePlot1, ratingplot1, ncol = 2, nrow = 1)  
+```
+
+## Quali sono le tipologie di animazione?
+
+Ve ne sono 6 principali, ma le serie TV sono di gran lunga le preferite dagli autori per rappresentare le loro opere.
+
+```{r echo=FALSE, fig.height= 4, fig.width=8}
+
+type_data <-AnimeList2022new %>%     #quanti film, serie tv, oVA e ONA
+  filter(type != "") %>%
+  group_by(type) %>%
+  count()
+
+ggplot( type_data, aes( x = type, y =n, fill = as.factor(type) ) ) +
+  geom_col() +
+  theme_minimal()+
+  scale_fill_manual(values = as.vector(isol(15)))+
+  guides( fill = guide_legend(title = " tipo") ) +
+  labs( x = "tipo di media", y = "numero di anime")
+
+
+```
+
+## Che origine hanno gli anime ? 
+
+come si può vedere la maggior parte sono creati proprio con lo scopo di essere delle opere animate, ma una buona fetta di anime sono l'adattazione animata di libri e manga (fumetti).
+
+```{r echo=FALSE, fig.height= 4, fig.width=8}
+
+orig <- AnimeList2022new %>%
+  filter(source != "") %>%
+  group_by(source) %>%
+  count() %>%
+  ungroup()%>%
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc))
+
+ggplot( orig, aes( x = source, y = perc, fill = as.factor(source )) ) +
+  geom_col() +
+  coord_flip()+
+  theme_minimal()+
+  scale_fill_manual(values = as.vector(cubicyf(20)))+
+  guides( fill = guide_legend(title = " tipo") ) +
+  geom_text( aes(label = labels), position = position_dodge( width = 1),
+             hjust = 0, inherit.aes = TRUE, size = 3)+
+  labs( x = "", y = "") +
+    theme(legend.position = "none")
+
+```
+
+## La loro evoluzione nel tempo
+
+Gli anime sono nati come film di animazione ma dagli anni '60, con la diffusione della Televisione, hanno iniziato a diffondersi le serie TV animate, ancora oggi le più apprezzate dagli spettatori. Allo stesso modo nel 2000 con internet hanno iniziato a circolare nuove forme di animazione come gli ONA ( original net anime).
+
+```{r echo=FALSE, fig.width = 8, fig.height= 3.5}
+
+### release YEAR 
+dfRelease <- AnimeList2022new %>%
+  filter(type != "", !is.na(aired_from), !is.na(score) )
+
+ggplot(dfRelease, aes( x = aired_from, y = score, color = as.factor(type ) ) ) +
+  geom_point( size = 2)+
+  labs( x = "data di uscita", y = "voto") + 
+  guides( color = guide_legend(title = "tipo di media")) +
+  theme_minimal() +
+  scale_color_manual(values = as.vector(cubicl(6)))  
+
+```
+
+## andamento delle serie TV negli anni
+
+Dai diagrammi precedenti possiamo capire che le serie TV sono le opere più apprezzate e questo spiega la tendenza, negli anni, a produrne sempre di più.
+
+```{r echo=FALSE, fig.height= 4}
+
+## dataset con solo serie tv
+dfTV <- AnimeList2022new%>%
+  filter( type == "TV", !is.na(premiered_year), premiered_year  != 2023) %>%
+  group_by( premiered_year) %>%
+  count()
+
+ggplot(dfTV, aes( x = premiered_year , y = n, color = "#BA55D3" ) ) +
+  geom_point( )+
+  geom_line() +
+  geom_smooth( method = loess,  color = "#8B4513", formula = y ~ x) +
+  labs( x = "anno", y = "numero di anime") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+
+## cosa accadrà in futuro ?
+
+### coefficente di Pearson :
+
+```{r echo=FALSE, fig.height= 6}
+
+cor(dfTV$premiered_year, dfTV$n) #correlazione di pearson
+
+```
+
+Grazie al coefficente di Pearson si può notare una forte *correlazione lineare positiva* tra l'anno di uscita e la quantità di anime prodotti. Quindi dai dati odierni si può presumere che il numero di serie TV continuerà ad aumentare nei prossimi anni, anche se man mano questa tendenza sta calando a fronte di altri tipologie di opere come gli ONA.
+
+## Quali sono i gusti degli utenti?
+
+Le 10 opere che gli utenti hanno votato con un punteggio medio più alto sono:
+
+```{r echo=FALSE, fig.width= 4, fig.height= 7}
+
+ #top Anime di ANimeList2022
+dfAnimeTop <- AnimeList2022new %>%
+  top_n(10, score) %>%
+  arrange( desc(score)) %>%
+  select( title, score) 
+
+dfAnimeTop
+```
+
+## cosa ci dice la top 10 ?
+
+```{r echo=FALSE, fig.width= 8.5, fig.height= 5}
+## di che genere sono gli anime più votati?
+top10 <- AnimeList2022new %>%
+  top_n(10, score)
+
+dfGen <- top10 %>% 
+  unnest(genres) %>%
+  count(genres) %>% 
+  ungroup() %>% 
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc))
+
+gen <- ggplot(dfGen, aes(x = "", y = perc, fill = genres)) +
+  geom_col() +
+  geom_text(aes(label = labels), position = position_stack(vjust = 0.5), color = "white") +
+  coord_polar(theta = "y" ) +
+  scale_fill_manual(values = as.vector(cubicl(9)))+
+  theme_void()+
+  guides(fill = guide_legend(title = "genere"))   #cambiare nome legenda
+
+##di che tipo sono?
+dfType <- top10 %>%
+  group_by( type) %>%
+  count() %>%
+  ungroup()%>%
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc))
+
+typ <-ggplot( dfType, aes( x = type, y = perc, fill = as.factor(type )) ) +
+  geom_col() +
+  theme_minimal()+
+  scale_fill_manual(values = as.vector(cubicyf(3)))+
+  guides( fill = guide_legend(title = " tipo") ) +
+  geom_text( aes(label = labels), position = position_dodge( width = 1), vjust= -0.5)+
+  labs( x = "tipo", y = "") +
+    theme(legend.position = "none")
+
+
+grid.arrange( gen, typ, ncol = 2, nrow = 1)  
+
+```
+
+## Quindi...
+
+Tra gli anime con voto maggiore, ben l'82% sono serie TV e nonostante i generi siano abbastanza eterogenei possiamo vedere che di poco il genere "Action" è il più apprezzato, seguito da "Drama" e "Sci-Fi"
+
+## Analizziamo il mio dataset
+
+Dopo aver dato uno sguardo sul mondo dell'animazione giapponese in generale, possiamo concentrarci sul mio dataset per poter capire se seguo la tendenza generale, o se mi caratterizzo per dei gusti particolari.
+
+## Cosa dice di me quello che guardo?
+
+```{r echo=FALSE, fig.width= 8, fig.height= 5}
+                            ### generi dei film che guardo di piu
+genres_data <-MyAnimeList %>%   #conto quante volte compare ogni genere 
+  unnest(genres) %>%
+  count(genres) %>%
+  ungroup()%>%
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc)) %>%
+  top_n(5, n)
+
+myGenpl <- ggplot( genres_data, aes( x = genres , y = perc,
+                                     fill =as.factor(genres) )) +
+  geom_col() + 
+  theme_void()+
+  scale_fill_manual(values = as.vector(cubicl(5)))+
+  labs( x = "", y = "genere") +
+   geom_text( aes(label = labels), position = position_dodge( width = 1),
+              vjust= -0.5, size = 3)+
+  guides( fill = guide_legend(title = "genere") )
+
+
+### Tipologia di audience: MOST FAMOUS SHOUNEN 
+DemoDf <- MyAnimeList %>%
+  filter( demographics != "Not defined") %>%
+  group_by(demographics) %>%
+  count()%>%
+  ungroup()%>%
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc)) 
+
+demoPlot<- ggplot(DemoDf, aes(x = "", y = perc, fill = demographics)) +
+  geom_col() +
+  geom_text(aes(label = labels), position = position_stack(vjust = 0.5), color = "white") +
+  coord_polar(theta = "y" ) +
+  scale_fill_manual(values = as.vector(cubicyf(5)))+
+  theme_void()+
+  guides(fill = guide_legend(title = "categoria"))   #cambiare nome legenda
+
+grid.arrange(myGenpl, demoPlot, ncol =2, nrow = 1)
+```
+
+## cosa possiamo dedurne
+
+I miei gusti in fatto di genere sono abbastanza simili all'andamento dedotto dal dataset generale, infatti il mio genere preferito risulta essere proprio "Action". Possiamo notare, inoltre, che quasi tutti gli anime che ho visto fatto parte della categoria "shounen" ovvero anime creati con lo scopo di piacere ad un pubblico maschile in età adolescenziale.
+
+## quale tipologia di opere preferisco?
+
+anche nel mio caso le serie TV sono in netta maggioranza, probabilmente anche perchè il maggior numero di opere di buona qualità sono proprio le serie TV come visto dal dataset generale
+
+```{r echo=FALSE, fig.width= 8, fig.height= 4}
+
+type_data <-MyAnimeList %>%     #quanti film, serie tv, oVA e ONA
+  group_by(Type) %>%
+  count()%>%
+  ungroup()%>%
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc)) 
+
+
+typePlot<- ggplot( type_data, aes( x = "", y = perc, fill = as.factor(Type) ) ) +
+  geom_col() +
+  coord_polar(theta = "y" ) +
+  geom_text(aes(label = labels), position = position_stack(vjust = 0.5), 
+            color = "white") +
+  scale_fill_manual(values = as.vector(cubicyf(8)))+
+  theme_void()+
+  guides(fill = guide_legend(title = "categoria"))   #cambiare nome legenda
+
+
+typePlot
+```
+
+## quali sono i miei studio di animazione preferiti?
+
+```{r echo=FALSE, fig.width= 8, fig.height= 5, message= FALSE, warning=FALSE}
+
+## studios : MOST FAMOUS -> A-1 PICTURES
+
+studios_data <- MyAnimeList %>%
+  filter(studios != "") %>%
+  unnest(studios) %>%
+  count(studios) %>%
+  top_n(5, n)
+
+nStud <- ggplot( studios_data, aes(x = studios, y = n, fill = as.factor(n) )) +
+  geom_col() + 
+  theme_minimal()+
+  scale_fill_manual(values = as.vector(brewer.spectral(12)))+
+  labs( x = "top 5 studio", y = "") +
+  guides( fill = guide_legend(title = "numero produzioni") )
+
+
+#TOP 10 :
+#1) STUDIOS
+
+dfAnime <- MyAnimeList %>%
+  unnest(studios)
+
+top5_Studios <- inner_join(studios_data, dfAnime, by = "studios")
+
+studXyear <- ggplot(top5_Studios, aes(x= aired_from , y=MyScore, color = studios)) +
+  geom_line( linetype = "dashed", size = 1) +
+  geom_point( size = 4)+
+  scale_color_manual(values = as.vector(cubicl(5))) +
+  theme_minimal() +
+  labs( x = "anno", y = "punteggio") +
+  guides( color = guide_legend(title = "studio") )
+
+grid.arrange( nStud, studXyear, ncol= 1, nrow =2)
+```
+
+## cosa ne deduciamo
+
+I grafici mostrano i 5 studi di produzione comparsi di più all'interno del mio dataset. Tra tutti, quello che compare più volte è lo studio "A-1 Pictures" anche se non tutte le opere le ho apprezzate pienamente. Lo studio che invece ha ricevuto voti più alti da parte mia è stato lo studio "Production I.G"
+
+## I miei anime preferiti quali sono ?
+
+```{r echo=FALSE, fig.height=2, fig.width=2, message=FALSE, warning=FALSE}
+#2) MY top anime
+top5_anime <- MyAnimeList %>%
+  top_n(5, MyScore)
+
+df <- top5_anime %>%
+  pivot_longer( c("MyScore", "score"), names_to = "scores", values_to = "pt" )
+
+top10anime <- top5_anime %>%
+  select( Name)
+
+top10anime
+
+```
+
+## cosa possiamo dedurne
+
+osservando le opere a cui ho dato il punteggio massimo, possiamo notare che molti di essi sono diversi archi narrativi della stessa storia. Ad esempio "Made in Abyss" compare ben 3 volte.
+
+## confronto con la community?
+
+I miei anime preferiti non hanno tutti un punteggio elevato dato dalla community ma essendo sempre maggiore al 7.5 possiamo dire che sono comunque considerate delle buone opere.
+
+```{r echo=FALSE, fig.width= 7, fig.height= 4, message= FALSE, warning=FALSE}
+ggplot(df, aes( Name , pt)) +   
+  geom_bar(aes(fill = scores), stat = "identity", position = "dodge") +
+  coord_flip() +
+  theme_minimal() +
+  labs( x = "", y = "punteggio") +
+  guides( fill = guide_legend(title = "legenda") ) +
+  scale_fill_manual(values = as.vector(cubicl(2))) 
+
+```
+
+## A quali generi appartengono?
+
+a conferma della mia preferenza per i generi "Action" e "Fantasy" possiamo vedere che tra i miei top 10 anime i generi più diffusi sono proprio "Action" e "Fantasy".
+
+```{r echo=FALSE, fig.width= 7, fig.height= 4, message= FALSE, warning=FALSE}
+
+genre_MytopAnime <- top5_anime %>%
+  unnest(genres) %>%
+  count(genres)
+
+ggplot(genre_MytopAnime, aes( x = genres, y = n, fill = as.factor(n) )) + 
+  geom_col( ) +
+  coord_flip() +
+  theme_minimal() +
+  labs( x = "tipo", y = "numero di anime") +
+  guides( fill = guide_legend(title = "legenda") ) +
+  scale_fill_manual(values = as.vector(cubicl(6))) 
+```
+
+## cosa guardare di nuovo?
+
+Grazie ai gusti emersi dallo studio del mio dataset e sfruttando il dataset contenente tutti gli anime prodotti , possiamo cercare quali sono le opere che più si avvicinano ai miei gusti personali
+
+```{r echo=FALSE, fig.width= 8, fig.height= 4, message= FALSE, warning=FALSE}
+AnimeList2022new$demographics <- as.character( AnimeList2022new$demographics)    #lista dei generi dell'anime
+AnimeList2022new$studios <- as.character( AnimeList2022new$studios)  
+MyAnimeList$studios <- as.character( MyAnimeList$studios)  
+
+# trovare anime consigliati in base ai miei gusti
+reccomended <- anti_join(AnimeList2022new, MyAnimeList ) #elimino gli anime che già conosco
+reccomended <- reccomended %>%
+   select( -synopsis, -background, -main_picture, -url, -trailer_url, 
+           -title_japanese, -title_synonyms) %>%
+  filter( type  == "TV") %>%
+  unnest(genres) %>%
+  filter( genres == c( "Fantasy", "Action"), score >= 8.50) %>%
+  top_n(5, score)
+
+ggplot( reccomended, aes( x = title, y = as.factor(score), fill = as.factor(studios) ) ) +
+  geom_col() +
+  theme( axis.text.x = element_text(size = 10, angle = 45, hjust = 1), panel.background =
+           element_rect(fill = "white") ) +
+  scale_fill_manual(values = as.vector(cubicl(10))) +
+  labs( x = "", y = "punteggio") +
+  guides( fill = guide_legend(title = "studio") )
+
+```
